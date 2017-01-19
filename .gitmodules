@@ -1,0 +1,3 @@
+[submodule "extern/readerwriterqueue"]
+	path = extern/readerwriterqueue
+	url = git@github.com:cameron314/readerwriterqueue

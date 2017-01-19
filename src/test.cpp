@@ -21,6 +21,55 @@
  * IN THE SOFTWARE.
  */
 
+#include "assemblyLine.hpp"
+
+#include <unistd.h>
+
+using namespace assemblyLine;
+
+class IntFloatModule : public Module<IntFloatModule, int, float> {
+public:
+    void operate() {
+        int n;
+        while(input.try_dequeue(n)) {
+            output->enqueue(n * 2.f);
+        }
+    }
+};
+class FloatCharModule : public Module<FloatCharModule, float, unsigned char> {
+public:
+    void operate() {
+        float f;
+        while(input.try_dequeue(f)) {
+            output->enqueue((unsigned char)((int)f + 1));
+        }
+    }
+};
+
 int main(int argc, char* argv[]) {
+
+    IntFloatModule modA;
+    FloatCharModule modB;
+    moodycamel::ReaderWriterQueue<unsigned char> results;
+    modB.output = &results;
+
+    Chain<IntFloatModule*, FloatCharModule*> opChain(&modA, &modB);
+    opChain.engage();
+
+    for (int i = 0; i < 10; ++i) {
+        modA.input.enqueue(i);
+    }
+
+    usleep(1000);
+
+    opChain.disengage();
+
+    int n;
+    while(results.try_dequeue(n)) {
+        printf("%i\n", n);
+    }
+
+    results.~ReaderWriterQueue();
+
     return 0;
 }
