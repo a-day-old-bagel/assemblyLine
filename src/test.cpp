@@ -22,8 +22,7 @@
  */
 
 #include "assemblyLine.hpp"
-
-#include <unistd.h>
+#include <chrono>
 
 using namespace assemblyLine;
 
@@ -50,26 +49,23 @@ int main(int argc, char* argv[]) {
 
     IntFloatModule modA;
     FloatCharModule modB;
-    moodycamel::ReaderWriterQueue<unsigned char> results;
-    modB.output = &results;
 
-    Chain<IntFloatModule*, FloatCharModule*> opChain(&modA, &modB);
+    Chain<unsigned char, IntFloatModule, FloatCharModule> opChain(&modA, &modB);
     opChain.engage();
 
     for (int i = 0; i < 10; ++i) {
         modA.input.enqueue(i);
     }
 
-    usleep(1000);
+    // wait for all data to (probably) make it into opChain.results
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     opChain.disengage();
 
     int n;
-    while(results.try_dequeue(n)) {
+    while(opChain.results.try_dequeue(n)) {
         printf("%i\n", n);
     }
-
-    results.~ReaderWriterQueue();
 
     return 0;
 }

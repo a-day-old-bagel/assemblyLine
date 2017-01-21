@@ -27,66 +27,37 @@
 #include <tuple>
 #include <thread>
 #include "../extern/readerwriterqueue/readerwriterqueue.h"
+#include "tupleForEach.hpp"
 
 namespace assemblyLine {
 
-    // Auto-unfolding helper function for iterating over contiguous element pairs in a tuple
-    template<typename TType, typename FType>
-    void tupleForPairsAfterFirst(TType&&, FType, std::integral_constant<size_t,
-            std::tuple_size<typename std::remove_reference<TType>::type >::value>) { }
-
-    template<std::size_t I, typename TType, typename FType, typename = typename
-            std::enable_if<I!=std::tuple_size<typename std::remove_reference<TType>::type>::value>::type >
-    void tupleForPairsAfterFirst(TType&& t, FType f, std::integral_constant<size_t, I>) {
-        f(std::get<I - 1>(t), std::get<I>(t), I);
-        tupleForPairsAfterFirst(std::forward<TType>(t), f, std::integral_constant<size_t, I + 1>());
-    }
-    template<typename TType, typename FType>
-    void tupleForPairsAfterFirst(TType&& t, FType f) {
-        tupleForPairsAfterFirst(std::forward<TType>(t), f, std::integral_constant<size_t, 1>());
-    }
-    // Auto-unfolding helper functions for iterating over each element in a tuple
-    template<typename TType, typename FType>
-    void tupleForEach(TType&&, FType, std::integral_constant<size_t,
-            std::tuple_size<typename std::remove_reference<TType>::type >::value>) { }
-
-    template<std::size_t I, typename TType, typename FType, typename = typename
-    std::enable_if<I!=std::tuple_size<typename std::remove_reference<TType>::type>::value>::type >
-    void tupleForEach(TType&& t, FType f, std::integral_constant<size_t, I>) {
-        f(std::get<I>(t));
-        tupleForEach(std::forward<TType>(t), f, std::integral_constant<size_t, I + 1>());
-    }
-    template<typename TType, typename FType>
-    void tupleForEach(TType&& t, FType f) {
-        tupleForEach(std::forward<TType>(t), f, std::integral_constant<size_t, 0>());
-    }
-
-    // Module class
+    /*
+     * The Module class represents one basic operation that presumably has an input and an output.
+     * Module must be implemented using the Curiously Recurring Template Pattern (CRTP).
+     * This means that the user must create a class inheriting from Module, and must create an operate() method
+     * within that class. Presumably, the operate() method will pull things from the input queue, do something
+     * with them, and then push things onto the output queue.
+     *
+     * Template parameters are:
+     * 1. The name of the class inheriting from Module (google CRTP for why)
+     * 2. The type of the input items
+     * 3. The type of the output items
+     *
+     * See test.cpp for an example of how to use these.
+     */
     template <typename Derived, typename I, typename O>
     class Module {
+        template <typename ResultType, typename... ModuleTypes> friend class Chain;
         Derived& derived();
-    public:
-        moodycamel::ReaderWriterQueue<I>  input;
-        moodycamel::ReaderWriterQueue<O>* output;
         std::thread spawn();
-        void setOutput(moodycamel::ReaderWriterQueue<O>* output);
         void beginLoop();
         bool quit = false;
-    };
-
-    // Chain class for connecting Modules
-    template <typename... ModuleTypes>
-    class Chain {
-        std::tuple<ModuleTypes...> modules;
-        std::vector<std::thread> threads;
-        size_t size;
+    protected:
+        moodycamel::ReaderWriterQueue<O>* output;
     public:
-        Chain(ModuleTypes... modules);
-        int engage();
-        int disengage();
-
+        moodycamel::ReaderWriterQueue<I>  input;
+        void setOutput(moodycamel::ReaderWriterQueue<O>* output);
     };
-
     // Module method implementations
     template <typename Derived, typename I, typename O>
     void Module<Derived, I, O>::setOutput(moodycamel::ReaderWriterQueue<O>* output) {
@@ -107,33 +78,75 @@ namespace assemblyLine {
         }
     }
 
-    // Chain method implementations
-    template <typename... ModuleTypes>
-    Chain<ModuleTypes...>::Chain(ModuleTypes... modules) {
+    /*
+     * The Chain class handles a collection of Modules, where each Module's output presumably feeds into the input
+     * of the next. In reality, this depends on the user's implementation of their Modules' operate() methods.
+     *
+     * Template arguments are:
+     * 1. type of final results that the chain produces (same as output parameter of last module)
+     * ... The types of each module in order (these types must inherit from Module and implement operate() ).
+     *
+     * see test.cpp for an example of how to use these.
+     */
+    template <typename ResultType, typename... ModuleTypes>
+    class Chain {
+        std::tuple<ModuleTypes*...> modules;
+        std::vector<std::thread> threads;
+    public:
+        /*
+         * Constructor take pointers to instantiated Modules who's types were given as template parameters
+         */
+        Chain(ModuleTypes*... modules);
+        /*
+         * Final results of the assembly line (the Chain) can be retrieved from here as they come in.
+         */
+        moodycamel::ReaderWriterQueue<ResultType> results;
+        /*
+         * First calls disengage() in case modules were already working, then starts all modules working in
+         * their own respective threads. Depending on the user's Module implementations,
+         * results could now start appearing in the results queue.
+         */
+        int engage();
+        /*
+         * Stops work on all Modules. However, it is up to the user to make sure that the operate() methods for each
+         * module actually return. If they do not, then this call may block indefinitely while waiting for threads
+         * to exit.
+         * When disengage() is called, any data currently working its way through the chain may or may not make it
+         * into "results". More guarantees may be made in future versions. For now, just make sure you've gotten
+         * the data you want out of the chain before you call disengage.
+         */
+        int disengage();
+    };
+    /*
+     * Chain method implementations follow...
+     */
+    template <typename ResultType, typename... ModuleTypes>
+    Chain<ResultType, ModuleTypes...>::Chain(ModuleTypes*... modules) {
         this->modules = std::make_tuple(modules...);
-        tupleForPairsAfterFirst(this->modules, [](auto& prevModule, auto& module, size_t index) {
+        tupleForEachPair(this->modules, [&](auto& prevModule, auto& module, size_t index) {
             prevModule->output = &(module->input);
+            if (index = sizeof...(ModuleTypes) - 1) {
+                module->output = &results;
+            }
         });
     }
-    template <typename... ModuleTypes>
-    int Chain<ModuleTypes...>::engage() {
+    template <typename ResultType, typename... ModuleTypes>
+    int Chain<ResultType, ModuleTypes...>::engage() {
         disengage();
-        tupleForEach(this->modules, [&](auto& module) {
+        tupleForEach(this->modules, [&](auto& module, size_t index) {
             module->quit = false;
             threads.emplace_back(module->spawn());
         });
         return 0;
     }
-    template <typename... ModuleTypes>
-    int Chain<ModuleTypes...>::disengage() {
-        tupleForEach(this->modules, [](auto& module) {
-            module->quit = true;
-        });
-        for (int i = 0; i < threads.size(); ++i) {
-            if (threads[i].joinable()) {
-                threads[i].join();
+    template <typename ResultType, typename... ModuleTypes>
+    int Chain<ResultType, ModuleTypes...>::disengage() {
+        tupleForEach(this->modules, [&](auto& module, size_t index) {
+            if (threads.size() > index && threads[index].joinable()) {
+                module->quit = true;
+                threads[index].join();
             }
-        }
+        });
         threads.clear();
         return 0;
     }
