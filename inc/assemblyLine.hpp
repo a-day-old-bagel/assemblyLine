@@ -79,6 +79,7 @@ namespace assemblyLine {
         while (!quit) {
             derived().operate();
         }
+        derived().deinit();
     }
 
     /*

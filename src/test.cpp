@@ -37,6 +37,9 @@ public:
             output->enqueue(n * 2.f);
         }
     }
+    void deinit() {
+
+    }
 };
 class FloatCharModule : public Module<FloatCharModule, float, unsigned char> {
 public:
@@ -48,6 +51,9 @@ public:
         while(input.try_dequeue(f)) {
             output->enqueue((unsigned char)((int)f + 1));
         }
+    }
+    void deinit() {
+
     }
 };
 
