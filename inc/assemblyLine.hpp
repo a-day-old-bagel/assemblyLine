@@ -34,9 +34,11 @@ namespace assemblyLine {
     /*
      * The Module class represents one basic operation that presumably has an input and an output.
      * Module must be implemented using the Curiously Recurring Template Pattern (CRTP).
-     * This means that the user must create a class inheriting from Module, and must create an operate() method
-     * within that class. Presumably, the operate() method will pull things from the input queue, do something
-     * with them, and then push things onto the output queue.
+     * The inheriting class must provide an operate() method and init() method.
+     * Presumably, the operate() method will pull things from the input queue, do something
+     * with them, and then push things onto the output queue. The init() method is for whatever the user wants, and
+     * probably most useful for things that must happen on the same thread as other things in the operate() method, but
+     * are only meant to happen once (upon initialization).
      *
      * Template parameters are:
      * 1. The name of the class inheriting from Module (google CRTP for why)
@@ -85,7 +87,7 @@ namespace assemblyLine {
      *
      * Template arguments are:
      * 1. type of final results that the chain produces (same as output parameter of last module)
-     * ... The types of each module in order (these types must inherit from Module and implement operate() ).
+     * ... The types of each module in order (these types must inherit from Module and implement operate() and init() ).
      *
      * see test.cpp for an example of how to use these.
      */
@@ -93,6 +95,26 @@ namespace assemblyLine {
     class Chain {
         std::tuple<ModuleTypes*...> modules;
         std::vector<std::thread> threads;
+
+        /*
+         * Don't look at these two functions, they'll burn your eyes out.
+         */
+        template <typename ...MT>
+        auto linkModules()
+        -> typename std::enable_if<(sizeof...(MT) > 1), void>::type {
+            tupleForEachPair(modules, [&](auto& prevModule, auto& module, size_t index) {
+                prevModule->output = &(module->input);
+                if (index = sizeof...(ModuleTypes) - 1) {
+                    module->output = &results;
+                }
+            });
+        }
+        template <typename ...MT>
+        auto linkModules()
+        -> typename std::enable_if<(sizeof...(MT) == 1), void>::type {
+            std::get<0>(modules)->output = &results;
+        }
+
     public:
         /*
          * Constructor take pointers to instantiated Modules who's types were given as template parameters
@@ -109,9 +131,9 @@ namespace assemblyLine {
          */
         int engage();
         /*
-         * Stops work on all Modules. However, it is up to the user to make sure that the operate() methods for each
-         * module actually return. If they do not, then this call may block indefinitely while waiting for threads
-         * to exit.
+         * Stops work on all Modules. However, it is up to the user to make sure that the operate() and init()
+         * methods for each module actually return. If they do not, then this call may block indefinitely while waiting
+         * for threads to exit.
          * When disengage() is called, any data currently working its way through the chain may or may not make it
          * into "results". More guarantees may be made in future versions. For now, just make sure you've gotten
          * the data you want out of the chain before you call disengage.
@@ -124,12 +146,7 @@ namespace assemblyLine {
     template <typename ResultType, typename... ModuleTypes>
     Chain<ResultType, ModuleTypes...>::Chain(ModuleTypes*... modules) {
         this->modules = std::make_tuple(modules...);
-        tupleForEachPair(this->modules, [&](auto& prevModule, auto& module, size_t index) {
-            prevModule->output = &(module->input);
-            if (index = sizeof...(ModuleTypes) - 1) {
-                module->output = &results;
-            }
-        });
+        linkModules<ModuleTypes...>();
     }
     template <typename ResultType, typename... ModuleTypes>
     int Chain<ResultType, ModuleTypes...>::engage() {
