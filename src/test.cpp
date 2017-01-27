@@ -28,6 +28,9 @@ using namespace assemblyLine;
 
 class IntFloatModule : public Module<IntFloatModule, int, float> {
 public:
+    void init() {
+
+    }
     void operate() {
         int n;
         while(input.try_dequeue(n)) {
@@ -37,6 +40,9 @@ public:
 };
 class FloatCharModule : public Module<FloatCharModule, float, unsigned char> {
 public:
+    void init() {
+
+    }
     void operate() {
         float f;
         while(input.try_dequeue(f)) {

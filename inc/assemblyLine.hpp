@@ -73,7 +73,7 @@ namespace assemblyLine {
     };
     template <typename Derived, typename I, typename O>
     void Module<Derived, I, O>::beginLoop() {
-        derived.init();
+        derived().init();
         while (!quit) {
             derived().operate();
         }
